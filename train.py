@@ -58,6 +58,19 @@ def setup_training_loop_kwargs(
     resume     = None, # Load previous network: 'noresume' (default), 'ffhq256', 'ffhq512', 'ffhq1024', 'celebahq256', 'lsundog256', <file>, <url>
     freezed    = None, # Freeze-D: <int>, default = 0 discriminator layers
 
+    # Rank loss options (ported from RankGAN).
+    # Rank loss is a structured regularizer: adversarial loss always at full strength,
+    # rank loss is purely additive with weight lambda_rank.
+    rank_loss       = None, # Enable ranking loss for D: <bool>, default = False
+    rank_k          = None, # Number of interpolation steps: <int>, default = 8
+    rank_loss_type  = None, # Ranking loss type: 'listmle' (default), 'pairwise_logistic', 'pairwise_hinge'
+    lambda_rank     = None, # Weight for ranking loss: <float>, default = 0.1
+    lambda_adv      = None, # Weight for adversarial loss: <float>, default = 1.0 (set 0 for pure rank ablation)
+    rank_mode       = None, # Interpolation mode: 'intrpl' (default), 'noise', 'add_mix'
+    rank_alpha_dist = None, # Alpha distribution: 'linear' (default), 'cosine', 'random'
+    rank_augment    = None, # Apply augmentation to rank images: <bool>, default = False
+    rank_margin     = None, # Margin for pairwise hinge loss: <float>, default = 1.0
+
     # Performance options (not included in desc).
     fp32       = None, # Disable mixed-precision training: <bool>, default = False
     nhwc       = None, # Use NHWC memory format with FP16: <bool>, default = False
@@ -322,6 +335,47 @@ def setup_training_loop_kwargs(
         args.D_kwargs.block_kwargs.freeze_layers = freezed
 
     # -------------------------------------------------
+    # Rank loss options (ported from RankGAN)
+    # -------------------------------------------------
+
+    if rank_loss is not None and rank_loss:
+        desc += '-rank'
+        args.loss_kwargs.rank_loss = True
+
+        if rank_k is not None:
+            assert isinstance(rank_k, int) and rank_k >= 2
+            args.loss_kwargs.rank_K = rank_k
+
+        if rank_loss_type is not None:
+            assert rank_loss_type in ['listmle', 'pairwise_logistic', 'pairwise_hinge']
+            args.loss_kwargs.rank_loss_type = rank_loss_type
+            desc += f'-{rank_loss_type}'
+
+        if lambda_rank is not None:
+            assert isinstance(lambda_rank, float) and lambda_rank >= 0
+            args.loss_kwargs.lambda_rank = lambda_rank
+
+        if lambda_adv is not None:
+            assert isinstance(lambda_adv, float) and lambda_adv >= 0
+            args.loss_kwargs.lambda_adv = lambda_adv
+
+        if rank_mode is not None:
+            assert rank_mode in ['intrpl', 'noise', 'add_mix']
+            args.loss_kwargs.rank_mode = rank_mode
+
+        if rank_alpha_dist is not None:
+            assert rank_alpha_dist in ['linear', 'cosine', 'random']
+            args.loss_kwargs.rank_alpha_dist = rank_alpha_dist
+
+        if rank_augment is not None:
+            assert isinstance(rank_augment, bool)
+            args.loss_kwargs.rank_augment = rank_augment
+
+        if rank_margin is not None:
+            assert isinstance(rank_margin, float) and rank_margin > 0
+            args.loss_kwargs.rank_margin = rank_margin
+
+    # -------------------------------------------------
     # Performance options: fp32, nhwc, nobench, workers
     # -------------------------------------------------
 
@@ -427,6 +481,17 @@ class CommaSeparatedList(click.ParamType):
 # Transfer learning.
 @click.option('--resume', help='Resume training [default: noresume]', metavar='PKL')
 @click.option('--freezed', help='Freeze-D [default: 0 layers]', type=int, metavar='INT')
+
+# Rank loss options (ported from RankGAN).
+@click.option('--rank-loss', help='Enable ranking loss for D [default: false]', type=bool, metavar='BOOL')
+@click.option('--rank-k', help='Number of interpolation steps for ranking [default: 3]', type=int, metavar='INT')
+@click.option('--rank-loss-type', help='Ranking loss type [default: listmle]', type=click.Choice(['listmle', 'pairwise_logistic', 'pairwise_hinge']))
+@click.option('--lambda-rank', help='Weight for ranking loss [default: 0.1]', type=float)
+@click.option('--lambda-adv', help='Weight for adversarial loss [default: 1.0, set 0 for pure rank ablation]', type=float)
+@click.option('--rank-mode', help='Interpolation mode for rank list [default: intrpl]', type=click.Choice(['intrpl', 'noise', 'add_mix']))
+@click.option('--rank-alpha-dist', help='Alpha distribution for rank list [default: linear]', type=click.Choice(['linear', 'cosine', 'random']))
+@click.option('--rank-augment', help='Apply augmentation to rank images [default: false]', type=bool, metavar='BOOL')
+@click.option('--rank-margin', help='Margin for pairwise hinge rank loss [default: 1.0]', type=float)
 
 # Performance options.
 @click.option('--fp32', help='Disable mixed-precision training', type=bool, metavar='BOOL')

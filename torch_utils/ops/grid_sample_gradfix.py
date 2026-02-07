@@ -34,10 +34,24 @@ def grid_sample(input, grid):
 def _should_use_custom_op():
     if not enabled:
         return False
-    if any(torch.__version__.startswith(x) for x in ['1.7.', '1.8.', '1.9']):
-        return True
-    warnings.warn(f'grid_sample_gradfix not supported on PyTorch {torch.__version__}. Falling back to torch.nn.functional.grid_sample().')
-    return False
+    return True
+
+#----------------------------------------------------------------------------
+
+def _grid_sampler_2d_backward(grad_output, input, grid):
+    """Call aten::grid_sampler_2d_backward with API compatible across PyTorch versions."""
+    # PyTorch 2.x: use torch.ops.aten directly
+    if hasattr(torch.ops.aten, 'grid_sampler_2d_backward'):
+        return torch.ops.aten.grid_sampler_2d_backward(
+            grad_output, input, grid,
+            0, 0, False,  # interpolation_mode=bilinear, padding_mode=zeros, align_corners=False
+            [True, True],  # output_mask: [need_grad_input, need_grad_grid]
+        )
+    # PyTorch 1.7-1.10 fallback: use _jit_get_operation
+    op = torch._C._jit_get_operation('aten::grid_sampler_2d_backward')
+    if isinstance(op, tuple):
+        op = op[0]  # PyTorch 1.11+ returns (op, overload_name)
+    return op(grad_output, input, grid, 0, 0, False)
 
 #----------------------------------------------------------------------------
 
@@ -61,8 +75,7 @@ class _GridSample2dForward(torch.autograd.Function):
 class _GridSample2dBackward(torch.autograd.Function):
     @staticmethod
     def forward(ctx, grad_output, input, grid):
-        op = torch._C._jit_get_operation('aten::grid_sampler_2d_backward')
-        grad_input, grad_grid = op(grad_output, input, grid, 0, 0, False)
+        grad_input, grad_grid = _grid_sampler_2d_backward(grad_output, input, grid)
         ctx.save_for_backward(grid)
         return grad_input, grad_grid
 
