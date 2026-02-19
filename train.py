@@ -63,13 +63,17 @@ def setup_training_loop_kwargs(
     # rank loss is purely additive with weight lambda_rank.
     rank_loss       = None, # Enable ranking loss for D: <bool>, default = False
     rank_k          = None, # Number of interpolation steps: <int>, default = 8
-    rank_loss_type  = None, # Ranking loss type: 'listmle' (default), 'pairwise_logistic', 'pairwise_hinge'
+    rank_loss_type  = None, # Ranking loss type: 'listmle', 'pairwise_logistic', 'pairwise_hinge', 'lambdaloss', 'ppa', 'approxndcg'
     lambda_rank     = None, # Weight for ranking loss: <float>, default = 0.1
     lambda_adv      = None, # Weight for adversarial loss: <float>, default = 1.0 (set 0 for pure rank ablation)
-    rank_mode       = None, # Interpolation mode: 'intrpl' (default), 'noise', 'add_mix'
+    rank_mode       = None, # Interpolation mode: 'intrpl', 'noise', 'add_mix', 'seq_mix'
     rank_alpha_dist = None, # Alpha distribution: 'linear' (default), 'cosine', 'random'
     rank_augment    = None, # Apply augmentation to rank images: <bool>, default = False
     rank_margin     = None, # Margin for pairwise hinge loss: <float>, default = 1.0
+    rank_noise_scale = None, # Noise scale for noise/add_mix/seq_mix modes: <float>, default = 0.01
+    rank_ppa_scale  = None, # NeuralSort temperature for PPA loss: <float>, default = 1.0
+    rank_ppa_sinkhorn_iters = None, # Sinkhorn iterations for PPA loss: <int>, default = 0
+    rank_approxndcg_temperature = None, # Sigmoid temperature for ApproxNDCG loss: <float>, default = 1.0
 
     # Performance options (not included in desc).
     fp32       = None, # Disable mixed-precision training: <bool>, default = False
@@ -347,7 +351,7 @@ def setup_training_loop_kwargs(
             args.loss_kwargs.rank_K = rank_k
 
         if rank_loss_type is not None:
-            assert rank_loss_type in ['listmle', 'pairwise_logistic', 'pairwise_hinge']
+            assert rank_loss_type in ['listmle', 'pairwise_logistic', 'pairwise_hinge', 'lambdaloss', 'ppa', 'approxndcg']
             args.loss_kwargs.rank_loss_type = rank_loss_type
             desc += f'-{rank_loss_type}'
 
@@ -360,7 +364,7 @@ def setup_training_loop_kwargs(
             args.loss_kwargs.lambda_adv = lambda_adv
 
         if rank_mode is not None:
-            assert rank_mode in ['intrpl', 'noise', 'add_mix']
+            assert rank_mode in ['intrpl', 'noise', 'add_mix', 'seq_mix']
             args.loss_kwargs.rank_mode = rank_mode
 
         if rank_alpha_dist is not None:
@@ -374,6 +378,22 @@ def setup_training_loop_kwargs(
         if rank_margin is not None:
             assert isinstance(rank_margin, float) and rank_margin > 0
             args.loss_kwargs.rank_margin = rank_margin
+
+        if rank_noise_scale is not None:
+            assert isinstance(rank_noise_scale, float) and rank_noise_scale >= 0
+            args.loss_kwargs.rank_noise_scale = rank_noise_scale
+
+        if rank_ppa_scale is not None:
+            assert isinstance(rank_ppa_scale, float) and rank_ppa_scale > 0
+            args.loss_kwargs.rank_ppa_scale = rank_ppa_scale
+
+        if rank_ppa_sinkhorn_iters is not None:
+            assert isinstance(rank_ppa_sinkhorn_iters, int) and rank_ppa_sinkhorn_iters >= 0
+            args.loss_kwargs.rank_ppa_sinkhorn_iters = rank_ppa_sinkhorn_iters
+
+        if rank_approxndcg_temperature is not None:
+            assert isinstance(rank_approxndcg_temperature, float) and rank_approxndcg_temperature > 0
+            args.loss_kwargs.rank_approxndcg_temperature = rank_approxndcg_temperature
 
     # -------------------------------------------------
     # Performance options: fp32, nhwc, nobench, workers
@@ -484,14 +504,18 @@ class CommaSeparatedList(click.ParamType):
 
 # Rank loss options (ported from RankGAN).
 @click.option('--rank-loss', help='Enable ranking loss for D [default: false]', type=bool, metavar='BOOL')
-@click.option('--rank-k', help='Number of interpolation steps for ranking [default: 3]', type=int, metavar='INT')
-@click.option('--rank-loss-type', help='Ranking loss type [default: listmle]', type=click.Choice(['listmle', 'pairwise_logistic', 'pairwise_hinge']))
+@click.option('--rank-k', help='Number of interpolation steps for ranking [default: 8]', type=int, metavar='INT')
+@click.option('--rank-loss-type', help='Ranking loss type [default: listmle]', type=click.Choice(['listmle', 'pairwise_logistic', 'pairwise_hinge', 'lambdaloss', 'ppa', 'approxndcg']))
 @click.option('--lambda-rank', help='Weight for ranking loss [default: 0.1]', type=float)
-@click.option('--lambda-adv', help='Weight for adversarial loss [default: 1.0, set 0 for pure rank ablation]', type=float)
-@click.option('--rank-mode', help='Interpolation mode for rank list [default: intrpl]', type=click.Choice(['intrpl', 'noise', 'add_mix']))
+@click.option('--lambda-adv', help='Weight for adversarial loss [default: 1.0]', type=float)
+@click.option('--rank-mode', help='Interpolation mode for rank list [default: intrpl]', type=click.Choice(['intrpl', 'noise', 'add_mix', 'seq_mix']))
 @click.option('--rank-alpha-dist', help='Alpha distribution for rank list [default: linear]', type=click.Choice(['linear', 'cosine', 'random']))
 @click.option('--rank-augment', help='Apply augmentation to rank images [default: false]', type=bool, metavar='BOOL')
 @click.option('--rank-margin', help='Margin for pairwise hinge rank loss [default: 1.0]', type=float)
+@click.option('--rank-noise-scale', help='Noise scale for noise/mix modes [default: 0.01]', type=float)
+@click.option('--rank-ppa-scale', help='NeuralSort temperature for PPA loss [default: 1.0]', type=float)
+@click.option('--rank-ppa-sinkhorn-iters', help='Sinkhorn iterations for PPA loss [default: 0]', type=int, metavar='INT')
+@click.option('--rank-approxndcg-temperature', help='Sigmoid temperature for ApproxNDCG [default: 1.0]', type=float)
 
 # Performance options.
 @click.option('--fp32', help='Disable mixed-precision training', type=bool, metavar='BOOL')
