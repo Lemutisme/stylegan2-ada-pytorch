@@ -124,7 +124,8 @@ class StyleGAN2Loss(Loss):
                  # rank loss is purely additive, controlled by lambda_rank.
                  rank_loss=False, rank_K=8, rank_loss_type='listmle',
                  lambda_rank=0.1, lambda_adv=1.0, rank_mode='intrpl',
-                 rank_alpha_dist='linear', rank_augment=False, rank_margin=1.0):
+                 rank_alpha_dist='linear', rank_augment=False, rank_margin=1.0,
+                 g_loss_type='softplus', rank_score_reg=0.0):
         super().__init__()
         self.device = device
         self.G_mapping = G_mapping
@@ -148,6 +149,8 @@ class StyleGAN2Loss(Loss):
         self.rank_alpha_dist = rank_alpha_dist
         self.rank_augment = rank_augment
         self.rank_margin = rank_margin
+        self.g_loss_type = g_loss_type
+        self.rank_score_reg = rank_score_reg
 
     def run_G(self, z, c, sync):
         with misc.ddp_sync(self.G_mapping, sync):
@@ -182,7 +185,10 @@ class StyleGAN2Loss(Loss):
                 gen_logits = self.run_D(gen_img, gen_c, sync=False)
                 training_stats.report('Loss/scores/fake', gen_logits)
                 training_stats.report('Loss/signs/fake', gen_logits.sign())
-                loss_Gmain = torch.nn.functional.softplus(-gen_logits) # -log(sigmoid(gen_logits))
+                if self.g_loss_type == 'hinge':
+                    loss_Gmain = -gen_logits
+                else:
+                    loss_Gmain = torch.nn.functional.softplus(-gen_logits)
                 training_stats.report('Loss/G/loss', loss_Gmain)
             with torch.autograd.profiler.record_function('Gmain_backward'):
                 loss_Gmain.mean().mul(gain).backward()
@@ -245,6 +251,13 @@ class StyleGAN2Loss(Loss):
                     loss_Drank = pairwise_hinge_loss(rank_scores, margin=self.rank_margin)
                 else:
                     loss_Drank = listmle_loss(rank_scores)  # fallback
+
+                # Score regularization: penalize mean(scores²) to prevent score drift
+                # when rank loss is translation-invariant
+                if self.rank_score_reg > 0:
+                    score_reg = rank_scores.square().mean()
+                    loss_Drank = loss_Drank + self.rank_score_reg * score_reg
+                    training_stats.report('Loss/D/score_reg', score_reg)
 
                 training_stats.report('Loss/D/rank', loss_Drank)
             with torch.autograd.profiler.record_function('Drank_backward'):

@@ -70,6 +70,8 @@ def setup_training_loop_kwargs(
     rank_alpha_dist = None, # Alpha distribution: 'linear' (default), 'cosine', 'random'
     rank_augment    = None, # Apply augmentation to rank images: <bool>, default = False
     rank_margin     = None, # Margin for pairwise hinge loss: <float>, default = 1.0
+    g_loss_type     = None, # G loss type: 'softplus' (default), 'hinge' (-mean(D(fake)), scale-invariant)
+    rank_score_reg  = None, # Score regularization weight for rank loss: <float>, default = 0 (adds λ·mean(scores²) to anchor score scale)
 
     # Performance options (not included in desc).
     fp32       = None, # Disable mixed-precision training: <bool>, default = False
@@ -375,6 +377,18 @@ def setup_training_loop_kwargs(
             assert isinstance(rank_margin, float) and rank_margin > 0
             args.loss_kwargs.rank_margin = rank_margin
 
+        if rank_score_reg is not None:
+            assert isinstance(rank_score_reg, float) and rank_score_reg >= 0
+            args.loss_kwargs.rank_score_reg = rank_score_reg
+            if rank_score_reg > 0:
+                desc += f'-scorereg{rank_score_reg:g}'
+
+    if g_loss_type is not None:
+        assert g_loss_type in ['softplus', 'hinge']
+        args.loss_kwargs.g_loss_type = g_loss_type
+        if g_loss_type != 'softplus':
+            desc += f'-g{g_loss_type}'
+
     # -------------------------------------------------
     # Performance options: fp32, nhwc, nobench, workers
     # -------------------------------------------------
@@ -492,6 +506,8 @@ class CommaSeparatedList(click.ParamType):
 @click.option('--rank-alpha-dist', help='Alpha distribution for rank list [default: linear]', type=click.Choice(['linear', 'cosine', 'random']))
 @click.option('--rank-augment', help='Apply augmentation to rank images [default: false]', type=bool, metavar='BOOL')
 @click.option('--rank-margin', help='Margin for pairwise hinge rank loss [default: 1.0]', type=float)
+@click.option('--rank-score-reg', help='Score regularization weight for rank loss (adds lambda*mean(scores^2)) [default: 0]', type=float)
+@click.option('--g-loss-type', help='G loss type: softplus (default) or hinge (-mean(D(fake))) [default: softplus]', type=click.Choice(['softplus', 'hinge']))
 
 # Performance options.
 @click.option('--fp32', help='Disable mixed-precision training', type=bool, metavar='BOOL')
