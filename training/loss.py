@@ -69,8 +69,8 @@ def make_rank_list(real_imgs: torch.Tensor, fake_imgs: torch.Tensor, K: int,
 
     Modes:
       - 'intrpl': Linear interpolation between real and fake.
-      - 'noise':  Adding Gaussian noise to real images with increasing intensity.
-      - 'add_mix': Interpolation + additive noise.
+      - 'noise':  Interpolation + mild interior noise (endpoints stay real/fake).
+      - 'add_mix': Interpolation + stronger interior noise (endpoints stay real/fake).
 
     Alpha Distributions:
       - 'linear':  Evenly spaced between 1.0 and 0.0.
@@ -85,27 +85,33 @@ def make_rank_list(real_imgs: torch.Tensor, fake_imgs: torch.Tensor, K: int,
     elif alpha_dist == 'cosine':
         alphas = 0.5 * (1.0 + torch.cos(torch.linspace(0, np.pi, K, device=device)))
     elif alpha_dist == 'random':
-        alphas = torch.cat([
-            torch.ones(1, device=device),
-            torch.rand(K - 1, device=device)
-        ])
-        alphas = torch.sort(alphas, descending=True)[0]
+        if K <= 2:
+            alphas = torch.linspace(1.0, 0.0, K, device=device)
+        else:
+            alphas = torch.cat([
+                torch.ones(1, device=device),
+                torch.rand(K - 2, device=device),
+                torch.zeros(1, device=device),
+            ])
+            alphas = torch.sort(alphas, descending=True)[0]
     else:
         alphas = torch.linspace(1.0, 0.0, K, device=device)
 
     alphas = alphas.view(1, K, 1, 1, 1)
 
+    interp = alphas * real_imgs.unsqueeze(1) + (1.0 - alphas) * fake_imgs.unsqueeze(1)
     if mode == 'intrpl':
-        return alphas * real_imgs.unsqueeze(1) + (1.0 - alphas) * fake_imgs.unsqueeze(1)
+        return interp
     elif mode == 'noise':
         noise = torch.randn_like(real_imgs).unsqueeze(1) * 0.01
-        return real_imgs.unsqueeze(1) + (1.0 - alphas) * noise
+        noise_gain = alphas * (1.0 - alphas)  # Keep endpoints fixed at real/fake.
+        return interp + noise_gain * noise
     elif mode == 'add_mix':
-        interp = alphas * real_imgs.unsqueeze(1) + (1.0 - alphas) * fake_imgs.unsqueeze(1)
         noise = torch.randn_like(real_imgs).unsqueeze(1) * 0.01
-        return interp + (1.0 - alphas) * noise
+        noise_gain = 2.0 * alphas * (1.0 - alphas)  # Stronger perturbation than 'noise'.
+        return interp + noise_gain * noise
     else:
-        return alphas * real_imgs.unsqueeze(1) + (1.0 - alphas) * fake_imgs.unsqueeze(1)
+        return interp
 
 #----------------------------------------------------------------------------
 
@@ -229,9 +235,16 @@ class StyleGAN2Loss(Loss):
         # This is purely ADDITIVE to the standard adversarial loss (never replaces it).
         if do_Dmain and self.rank_loss:
             with torch.autograd.profiler.record_function('Drank_forward'):
+                rank_fake_img = gen_img.detach()
+                if not torch.equal(gen_c, real_c):
+                    # In conditional setups, align fake labels with real labels for rank list.
+                    with torch.no_grad():
+                        rank_fake_img, _ = self.run_G(gen_z, real_c, sync=False)
+                    rank_fake_img = rank_fake_img.detach()
+
                 # Build ranking list: position 0 = real (best), position K-1 = fake (worst)
                 rank_imgs = make_rank_list(
-                    real_img, gen_img.detach(),
+                    real_img, rank_fake_img,
                     K=self.rank_K, mode=self.rank_mode, alpha_dist=self.rank_alpha_dist
                 )
                 B_rank, K, C, H, W = rank_imgs.shape

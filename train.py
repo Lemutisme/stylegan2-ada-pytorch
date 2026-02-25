@@ -498,7 +498,7 @@ class CommaSeparatedList(click.ParamType):
 
 # Rank loss options (ported from RankGAN).
 @click.option('--rank-loss', help='Enable ranking loss for D [default: false]', type=bool, metavar='BOOL')
-@click.option('--rank-k', help='Number of interpolation steps for ranking [default: 3]', type=int, metavar='INT')
+@click.option('--rank-k', help='Number of interpolation steps for ranking [default: 8]', type=int, metavar='INT')
 @click.option('--rank-loss-type', help='Ranking loss type [default: listmle]', type=click.Choice(['listmle', 'pairwise_logistic', 'pairwise_hinge']))
 @click.option('--lambda-rank', help='Weight for ranking loss [default: 0.1]', type=float)
 @click.option('--lambda-adv', help='Weight for adversarial loss [default: 1.0, set 0 for pure rank ablation]', type=float)
